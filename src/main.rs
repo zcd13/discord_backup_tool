@@ -4,10 +4,7 @@ use anyhow::Result;
 use futures::{stream, StreamExt};
 use reqwest::Client;
 use serde_json::{from_str, to_string_pretty};
-use serenity::all::{
-    ChannelType, Context, EventHandler, GatewayIntents, GetMessages, GuildChannel, GuildId,
-    Message, Ready, ThreadsData, Timestamp,
-};
+use serenity::all::{ChannelType, Context, EventHandler, GatewayIntents, GetMessages, Guild, GuildChannel, GuildId, Message, MessageId, Ready, ThreadsData, Timestamp};
 use serenity::async_trait;
 use std::collections::HashSet;
 use std::env::args;
@@ -23,7 +20,7 @@ use tokio::time::{sleep, timeout};
 
 #[tokio::main]
 async fn main() {
-    println!("Starting server");
+    println!("Starting server, supply token in args or in env DISCORD_TOKEN");
 
     let args = args();
     let token = if args.len() == 2 {
@@ -33,12 +30,19 @@ async fn main() {
         env::var("DISCORD_TOKEN").expect("Expected a token in the environment")
     };
 
-    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILDS;
 
     let mut client = serenity::Client::builder(&token, intents)
         .event_handler(Handler)
         .await
         .expect("Err creating client");
+
+    let shard_manager = client.shard_manager.clone();
+    spawn(async move {
+        tokio::signal::ctrl_c().await.expect("Could not register ctrl+c handler");
+        println!("Ctrl-c received. Shutting down client...");
+        shard_manager.shutdown_all().await;
+    });
 
     if let Err(why) = client.start().await {
         println!("Client error: {why:?}");
@@ -49,20 +53,46 @@ struct Handler;
 
 #[async_trait]
 impl EventHandler for Handler {
+    async fn guild_create(&self, _ctx: Context, guild: Guild, is_new: Option<bool>) {
+        if let Some(c) = is_new {
+            if c {
+                println!("Just connected to {}", guild.name);
+            }
+        }
+    }
+
     async fn message(&self, ctx: Context, new_message: Message) {
         if new_message.content == "!pull_backup" {
             let guild_id = new_message.guild_id.unwrap();
 
-            pull_backup(ctx.clone(), guild_id, new_message.timestamp)
+            pull_backup(ctx.clone(), guild_id, new_message.timestamp, new_message.id)
                 .await
                 .unwrap();
         }
     }
 
-    async fn ready(&self, _ctx: Context, _data_about_bot: Ready) {}
+    async fn ready(&self, ctx: Context, data_about_bot: Ready) {
+        println!("Bot active and waiting for !pull_backup message");
+        let guild_names: Vec<String> = stream::iter(data_about_bot.guilds)
+            .map(|g| (g, ctx.clone()))
+            .map(|(g, ctx)| async move {
+                ctx.http
+                    .get_guild(g.id)
+                    .await
+                    .map(|guild| guild.name)
+                    .unwrap_or("Unknown".into())
+            })
+            .buffer_unordered(3)
+            .collect()
+            .await;
+
+        for name in guild_names {
+            println!("Connected to {name}");
+        }
+    }
 }
 
-pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp) -> Result<()> {
+pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp, ref_message_id: MessageId) -> Result<()> {
     // create root
     let name = ctx
         .http
@@ -96,7 +126,7 @@ pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp) -> Re
             let ctx = ctx.clone();
             let gc = gc.clone();
             let stats = stats.clone();
-            spawn(async move { archive_channel(&ctx, &gc, stats).await })
+            spawn(async move { archive_channel(&ctx, &gc, stats, ref_message_id).await })
         };
 
         loop {
@@ -342,6 +372,7 @@ pub async fn archive_channel(
     ctx: &Context,
     gc: &GuildChannel,
     stats_handle: Arc<AtomicU32>,
+    ref_message_id: MessageId,
 ) -> Result<ArchiveChannel> {
     let mut messages = vec![];
     match gc.kind {
@@ -360,6 +391,8 @@ pub async fn archive_channel(
                 let mut get = GetMessages::new().limit(100);
                 if let Some(id) = lmi {
                     get = get.before(id);
+                } else {
+                    get = get.before(ref_message_id);
                 }
                 let query = gc.id.messages(&ctx.http, get).await?;
                 if query.is_empty() {
@@ -422,7 +455,7 @@ mod archive {
 mod alias {
     use serde::{Deserialize, Serialize};
     use serenity::all::{
-        Attachment, AttachmentId, Channel, ChannelId, ChannelType, GuildChannel, GuildId, Message,
+        Attachment, AttachmentId, ChannelId, ChannelType, GuildChannel, GuildId, Message,
         MessageId, MessageType, ThreadMetadata, Timestamp, User, UserId,
     };
 
