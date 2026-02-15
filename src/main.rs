@@ -10,6 +10,7 @@ use serenity::all::{
 };
 use serenity::async_trait;
 use std::collections::HashSet;
+use std::env::args;
 use std::fs::{write, File};
 use std::io::{stdout, Write};
 use std::path::{Path, PathBuf};
@@ -17,7 +18,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
-use std::env::{args, VarError};
 use tokio::spawn;
 use tokio::time::{sleep, timeout};
 
@@ -64,13 +64,13 @@ impl EventHandler for Handler {
 
 pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp) -> Result<()> {
     // create root
-    let name = ctx.http.get_guild(guild_id).await.map(|e| e.name).unwrap_or("Unknown".into());
-    let server_name = format!(
-        "{}-{}-{}",
-        name,
-        guild_id,
-        time
-    );
+    let name = ctx
+        .http
+        .get_guild(guild_id)
+        .await
+        .map(|e| e.name)
+        .unwrap_or("Unknown".into());
+    let server_name = format!("{}-{}-{}", name, guild_id, time);
     let san_name = sanitise_file_name::sanitise(&server_name);
     let root = PathBuf::from(san_name);
     fs::create_dir(&root)?;
@@ -209,7 +209,9 @@ pub async fn solve_attachments(root: &Path, server_archive: &mut ServerArchive) 
                 amount,
                 "*".repeat(fl)
             );
-            if led { break; }
+            if led {
+                break;
+            }
             stdout().flush().unwrap();
             sleep(Duration::from_millis(250)).await;
         }
@@ -256,7 +258,6 @@ pub async fn solve_attachments(root: &Path, server_archive: &mut ServerArchive) 
     kill.store(true, Ordering::SeqCst);
     prog_tracker.await?;
 
-
     let failed_assets = assets
         .iter()
         .filter_map(|f| {
@@ -276,7 +277,6 @@ pub async fn solve_attachments(root: &Path, server_archive: &mut ServerArchive) 
             file.write_all(&mut b)?;
         }
     }
-
 
     write(
         root.join(Path::new("AssetData.assdat")),
