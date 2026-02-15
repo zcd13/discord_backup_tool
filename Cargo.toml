@@ -1,0 +1,14 @@
+[package]
+name = "backtool"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.49.0", features = ["full"] }
+serenity = "0.12.5"
+serde = { version = "1.0.192", features = ["derive"] }
+serde_json = "1.0.108"
+anyhow = "1.0.101"
+sanitise-file-name = "1.0.0"
+reqwest = { version = "0.13.2" }
+futures = {version = "0.3.31", features = []}
