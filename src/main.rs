@@ -7,7 +7,6 @@ use serde_json::{from_str, to_string_pretty};
 use serenity::all::{ChannelType, Context, CreateMessage, EventHandler, GatewayIntents, GetMessages, Guild, GuildChannel, GuildId, Message, MessageId, Ready, ThreadsData, Timestamp};
 use serenity::async_trait;
 use std::collections::HashSet;
-use std::env::args;
 use std::fs::{write, File};
 use std::io::{stdout, Write};
 use std::path::{Path, PathBuf};
@@ -15,26 +14,44 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
-use serde::Serialize;
 use tokio::spawn;
 use tokio::time::{sleep, timeout};
+use clap::Parser;
+
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Options {
+    /// discord api token, bot requires the permissions administrator privileges to view all channels in a server
+    #[arg(short, long)]
+    token: Option<String>,
+
+    /// where to output archives
+    #[arg(short, long)]
+    path: Option<PathBuf>,
+}
 
 #[tokio::main]
 async fn main() {
     println!("Starting server, supply token in args or in env DISCORD_TOKEN");
 
-    let args = args();
-    let token = if args.len() == 2 {
-        let token = args.into_iter().nth(1).expect("Incorrect token args");
-        token
-    } else {
-        env::var("DISCORD_TOKEN").expect("Expected a token in the environment")
-    };
+    let args = Options::parse();
+
+    let token = args.token.as_ref().map(|f| f.clone()).unwrap_or_else(|| {
+        match env::var("DISCORD_TOKEN") {
+            Ok(t) => t,
+            Err(_) => {
+                eprintln!("If discord token is not passed as --token or -t it must be in ENV = DISCORD_TOKEN");
+                stdout().flush().unwrap();
+                std::process::exit(0);
+            }
+        }
+    });
 
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT | GatewayIntents::GUILDS;
 
     let mut client = serenity::Client::builder(&token, intents)
-        .event_handler(Handler)
+        .event_handler(Handler { ops: args })
         .await
         .expect("Err creating client");
 
@@ -50,7 +67,9 @@ async fn main() {
     }
 }
 
-struct Handler;
+struct Handler {
+    ops: Options,
+}
 
 #[async_trait]
 impl EventHandler for Handler {
@@ -68,7 +87,7 @@ impl EventHandler for Handler {
 
             new_message.channel_id.send_message(&ctx.http, CreateMessage::new().content("Archiving shit").tts(true)).await.unwrap();
 
-            pull_backup(ctx.clone(), guild_id, new_message.timestamp, new_message.id)
+            pull_backup(ctx.clone(), guild_id, new_message.timestamp, new_message.id, &self.ops.path)
                 .await
                 .unwrap();
         }
@@ -95,7 +114,7 @@ impl EventHandler for Handler {
     }
 }
 
-pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp, ref_message_id: MessageId) -> Result<()> {
+pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp, ref_message_id: MessageId, output_path: &Option<PathBuf>) -> Result<()> {
     // create root
     let name = ctx
         .http
@@ -105,7 +124,13 @@ pub async fn pull_backup(ctx: Context, guild_id: GuildId, time: Timestamp, ref_m
         .unwrap_or("Unknown".into());
     let server_name = format!("{}-{}-{}", name, guild_id, time);
     let san_name = sanitise_file_name::sanitise(&server_name);
-    let root = PathBuf::from(san_name);
+
+    let root = match output_path {
+        None => PathBuf::from(san_name),
+        Some(p) => p.join(san_name),
+    };
+    // let root = output_path.join(san_name);
+    // // let root = PathBuf::from(san_name);
     fs::create_dir(&root)?;
 
     let mut server_archive = ServerArchive::default();

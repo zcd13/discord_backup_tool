@@ -12,3 +12,5 @@ anyhow = "1.0.101"
 sanitise-file-name = "1.0.0"
 reqwest = { version = "0.13.2" }
 futures = {version = "0.3.31", features = []}
+
+clap = { version = "4.6.1", features = ["derive"] }
