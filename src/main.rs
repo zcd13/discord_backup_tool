@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures::{stream, StreamExt};
 use reqwest::Client;
 use serde_json::{from_str, to_string_pretty};
-use serenity::all::{ChannelType, Context, EventHandler, GatewayIntents, GetMessages, Guild, GuildChannel, GuildId, Message, MessageId, Ready, ThreadsData, Timestamp};
+use serenity::all::{ChannelType, Context, CreateMessage, EventHandler, GatewayIntents, GetMessages, Guild, GuildChannel, GuildId, Message, MessageId, Ready, ThreadsData, Timestamp};
 use serenity::async_trait;
 use std::collections::HashSet;
 use std::env::args;
@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{env, fs};
+use serde::Serialize;
 use tokio::spawn;
 use tokio::time::{sleep, timeout};
 
@@ -64,6 +65,8 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, new_message: Message) {
         if new_message.content == "!pull_backup" {
             let guild_id = new_message.guild_id.unwrap();
+
+            new_message.channel_id.send_message(&ctx.http, CreateMessage::new().content("Archiving shit").tts(true)).await.unwrap();
 
             pull_backup(ctx.clone(), guild_id, new_message.timestamp, new_message.id)
                 .await
